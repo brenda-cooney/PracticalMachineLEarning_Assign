@@ -1,0 +1,242 @@
+---
+title: "Prediction Model For Barbbell Lifts"
+author: "Brenda Cooney"
+date: "December, 2015"
+---
+
+##Synopsis
+
+The following is a report for an assignment that is part of the Coursera Practical Machine Learning Course. *The Question*: **Predict the manner in which 6 Participants did barbell lifts.** Barbell data was captured using activity monitors on the belt, forearm, arm, and dumbell of 6 participants. The training and test data were imported. There were 160 variables, where **classe** was the **outcome** variable. The dataset was cleaned and 'Best Know Methods' from the **carat** package were used to reduce the number of **predictor** variables. The number was reduced to 32. Two models (Classification Trees and Random Forest) were built and then compared to see which gave the best accuracy. Note, 10 fold Cross-Validation was used in both models. The Random Forest Model was best at predicting the outcome **classe** with an Accuracy of 99%.
+
+###Project Notes
+
+1. The different manners in which Participants were asked to lift the dumbell were: 
+
++ Exactly according to the specification (Class A)
++ Throwing the elbows to the front (Class B)
++ Lifting the dumbbell only halfway (Class C)
++ Lowering the dumbbell only halfway (Class D).
++ Throwing the hips to the front (Class E).
++ Note: A is the correct manner in which to lift dumbell all others are incorrect.
+
+2. Each participant was asked to perform each of the above **classes** 10 times.
+3. The data set and information can be got from [here][1] under the section "Weight Lifting Exercises Dataset"
+4. The training data for this project is available [here][2].
+5. The test data is available [here][3]. 
+
+##Install Packages
+
+Necessary packages installed (knitr, carat and randomFores)
+
+```{r installRequiredPkgs, include=FALSE}
+        if (!require(knitr)) {
+                ## Install package
+                install.packages("knitr", repos = "http://cran.us.r-project.org")
+                require(knitr) ## Load and attach package
+        }
+        if (!require(caret)) {
+                ## Install package
+                install.packages("caret", repos = "http://cran.us.r-project.org")
+                require(caret) ## Load and attach package
+        }
+        if (!require(randomForest)) {
+                ## Install package
+                install.packages("randomForest", repos = "http://cran.us.r-project.org")
+                require(randomForest) ## Load and attach package
+        }
+```
+
+##Import Data
+
+Training dataset is imported from [here][2] and testing dataset imported from [here][3].
+
+```{r echo=TRUE}
+urlTraining <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTesting <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainingFile <- "./pml-training.csv"
+testingFile <- "./pml-testing.csv"
+
+if( !file.exists(trainingFile) ) download.file(urlTraining, mode="w", trainingFile, method="curl")
+if( !file.exists(testingFile) ) download.file(urlTesting, mode="w", testingFile, method="curl")
+training_DS <- read.csv(file="pml-training.csv", header=TRUE, sep=",")
+testing_DS <- read.csv(file="pml-testing.csv", header=TRUE, sep=",")
+```
+
+##Clean Data
+
+There are **19622** samples and **160** variables in the training dataset.
+
+There are **20** rows of data and **160** variables in the testing dataset. 
+
+**Classe** is one of the variables and our **outcome** vairable. That leaves **159 predictors** - too many predictors to create a valid prediction model, so we need to reduce this number. Additionally, some of the variables are just not relevant to answering the **question** being asked.
+
+**Cleaning the training data set**
+
+Looking at the raw data, it can be seen that many of the values of the variables/columns are set to **NA**. After reading the documentation, it is clear that these variables are summary data, collected for the original project's goals. For this assignment, I will include only variables related to measurements taken using the activity monitors. 
+
+Any variables containing the following words are discarded ("avg|var|amplitude|stddev|kurtosis|skewness|max|min"), and the first 7 variables, as they are not data recorded on the actual devices. We are left with 53 predictors. This is still a lot of predictors, so we will apply some best known methods from the carat package to remove additional predictors.
+
+
+```{r echo=TRUE}
+##Remove all rows where all elements of the row are set to NA
+training_DS <- training_DS[rowSums(is.na(training_DS)) != ncol(training_DS),]
+##Remove all columns where all elements of the column are set to NA
+training_DS <- training_DS[,colSums(is.na(training_DS))<nrow(training_DS)]
+##Remove first couple of variables that have nothing to do with activity monitoring measurements
+training_DS <- training_DS[,-c(1:7)]
+##Remove summary variables
+training_DS <- training_DS[, -grep("avg|var|amplitude|stddev|kurtosis|skewness|max|min", colnames(training_DS))]
+```
+
+##Best Known Practises to Remove Unwanted Predictors
+
+###Remove Predictors with Near Zero Variance
+
+Predictors that have a near zero variance are removed. That is, variables that have one or few unique values relative to the number of samples is/are removed. And predictors are removed where the ratio of the most common value to the second most common value is determined to be 95/5 (this cutoff value can be changed). **For example,** if we want to predict a person's salary based on a number of predictors one of which is gender BUT only females were part of the study then there would be no point in using this variable as a predictor, as it offers no help in predicting 'salary'.
+
+
+```{r echo=TRUE}
+output <-nearZeroVar(training_DS, saveMetrics= TRUE)
+```
+
+Number of predictors with Near Zero Variance = `r length(which(output[["nzv"]]))`.
+
+###Discard Predictors that are highly correlated
+
+Variables that are higly correlated should be removed. That is, if one predictor can determine another then there is no point in having two predictors that have the same effect on predicting the outcome. **For example**, if we want to predict a person's salary based on a number of predictors - two of which are IQ and Education. If high IQ means high level of education and low IQ means low level of education for each sample, then both have the same effect so only one is needed.
+
+```{r echo=TRUE}
+varCor <- abs(cor(training_DS[,-length(names(training_DS))]))
+corVarsToRemove <- findCorrelation(varCor, cutoff=0.75)
+colnames(training_DS)[corVarsToRemove]
+```
+
+I have set cutoff to **0.75** as we really want to narrow down the number of variables. Note: it is not recommended to have a cutoff lower than 0.75. 
+
+We are able to remove `r length(colnames(training_DS)[corVarsToRemove])` predictors.
+
+```{r echo=TRUE}
+training_DS <- training_DS[, -corVarsToRemove]
+```
+
+###Remove Predictors that are a linear combination of other predictors
+
+Create a matrix of remaining predictors. Check to see if some preditors combined or individually are equal to another predictor and if so remove one of the predictors.
+
+```{r echo=TRUE}
+findLinearCombos(training_DS[,-length(names(training_DS))])
+```
+
+##Data Splitting
+
+We are now left with (** `r (length(names(training_DS)) - 1)` **) predictors. Let's now take our new dataset, split it and create a training and test dataset.
+
+```{r echo=TRUE}
+inTrain <- createDataPartition(y=training_DS$classe, p=0.75, list=FALSE)
+training <- training_DS[inTrain,]
+testing <- training_DS[-inTrain,]
+```
+
+##Create Prediction Model
+
+We will create two prediction models and compare them to find the best model. First model will be built using classification trees via method **rpart**. We will use K-fold cross validation by setting the **trControl** variable to use method 'cv' where the number of folds is set to 10.
+
+```{r echo=TRUE}
+modelFitRP <- train(classe ~., data=training, trControl=trainControl(method = "cv", number = 10), method="rpart")
+modelFitRP
+```
+
+Now we want to build a prediction model using the caret function train where the method is **Random Forest**. We will use K-fold cross validation by setting the **trControl** variable to use method 'cv' where the number of folds is set to 10. 
+
+```{r echo=TRUE}
+modelFitRF <- train(classe ~., data=training, trControl=trainControl(method = "cv", number = 10), method="rf")
+modelFitRF
+```
+
+Let's now compare the accuracy for each model.
+
+```{r echo=TRUE}
+confMatrixRP <- confusionMatrix(training$classe, predict(modelFitRP, training))
+confMatrixRF <- confusionMatrix(training$classe, predict(modelFitRF, training))
+```
+
+The accuracy for Random Forest method is higher: `r (confMatrixRF$overall[1] * 100)`% than that of classification trees: `r (confMatrixRP$overall[1] * 100)`%. So we will choose the RF model.
+
+###Random Forest Model Accuracy
+
+From the graph below we see that model accuracy increases as we reduce the number of predictors.
+
+```{r echo=FALSE}
+plot(modelFitRF)
+```
+
+Additionally, the best accuracy comes from a split on 2 variables. 
+
+###<a id="varImpSection">Predictor Importance</a>
+
+Let's now look at each predictors relevancy.
+
+```{r echo=FALSE}
+predImp <- varImp(modelFitRF, scale = FALSE)
+plot(predImp, top = 20)
+```
+
+This method can potentially be used to remove additional predictors. However, if we were to do that, we would be choosing the most important predictors based on this dataset, it's size, the methods used to capture the data, and making an assumption on variable importance by this Random Forest method.
+
+##In-Sample Error
+
+We will use 'Misclassification Rate' ie **Error Rate** as a measure for determining 'in-sample error' and 'out-of-sample' error. Misclassification Rate = (FalsePositives + FalseNegatives)/Total OR (1 - Accuracy). 
+
+```{r echo=TRUE}
+(1 - confMatrixRF$overall[1])
+```
+
+The 'in-sample-error' is **0** which means that the model predicted the 'classe' variable on each training sample perfectly - unity. However, in this type of situation we should be concerned about overfitting - capturing both 'Signal' and 'Noise, as the model may not work as well on other datasets. The goal is to capture 'Signal' only. Let's now look at the out-of-sample error.
+
+##Out-of-Sample Error
+
+Using the Random Forest Model, we will use 'Misclassification Rate/Error Rate' to determine the 'out-of-sample' error on a new dataset **testing**. This dataset is a subset of the original dataset and was seperated from the imported **training** dataset after unwanted predictors were removed. 
+
+Note: this value should be greater than **zero**.
+
+
+```{r echo=TRUE}
+confMatrixTestRF <- confusionMatrix(testing$classe, predict(modelFitRF, testing))
+(1 - confMatrixTestRF$overall[1])
+```
+
+Yes, it's greater than zero which is good.
+
+##CONCLUSION
+
+The Random Forest Model was able to predict with 99% accuracy on the testing dataset, which at first glance appears to be a great result. However, it may be overfitting, thus the model may not perform well on new samples. Additionally, the processing time is over 30mins. For this assignment this is ok, however it may not be in real life situations.
+
+32 predictors were used in the final predicton model this could be further reduced using the **varImp** (Variable Importance) method as seen [above] (#varImpSection), thus reducing the accuracy - which will get rid of the overfitting, and processing time.  
+
+##CourseProject Submission
+
+The second part of the exercise was to use the best prediction model on 20 test samples provided [here][3]. Note, the data samples do not contain the "classe" variable, as we are trying to predict this with our model.
+
+Below the model is used to predict the "classe" variable from the test samples. The results are:
+
+```{r echo=TRUE}
+predVal <- predict(modelFitRF, testing_DS)
+```
+
+Below is the code that will output the prediction for each test sample to a file to be uploaded and checked for verification.
+
+```{r echo=TRUE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(predVal)
+```
+
+[1]: http://groupware.les.inf.puc-rio.br/har "Oroginal Project Page"
+[2]: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv "Training Data Link"
+[3]: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
