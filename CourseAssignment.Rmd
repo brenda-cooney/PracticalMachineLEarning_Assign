@@ -173,7 +173,7 @@ plot(modelFitRF)
 
 Additionally, the best accuracy comes from a split on 2 variables. 
 
-###<a id="varImpSection">Predictor Importance</a>
+### Predictor Importance ###
 
 Let's now look at each predictors relevancy.
 
@@ -212,7 +212,7 @@ Yes, it's greater than zero which is good.
 
 The Random Forest Model was able to predict with 99% accuracy on the testing dataset, which at first glance appears to be a great result. However, it may be overfitting, thus the model may not perform well on new samples. Additionally, the processing time is over 30mins. For this assignment this is ok, however it may not be in real life situations.
 
-32 predictors were used in the final predicton model this could be further reduced using the **varImp** (Variable Importance) method as seen [above] (#varImpSection), thus reducing the accuracy - which will get rid of the overfitting, and processing time.  
+32 predictors were used in the final predicton model this could be further reduced using the **varImp** (Variable Importance) method as seen in section [Predictor Importance][], thus reducing the accuracy - which will get rid of the overfitting, and processing time.  
 
 ##CourseProject Submission
 
